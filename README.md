@@ -30,6 +30,12 @@ open a file, or drop a local file. Select `auto` for scripts/PEs; choose `x64` o
 The display shows measured local inference latency and process RAM. DEMO scores
 are never presented as threat probabilities.
 
+Direct-file launching also works: `python src/app/main_gui.py`.
+For a CPU benchmark using the bundled model and benign fixture, run
+`python scripts/run_benchmark.py` with no arguments. It measures 100 scans;
+NPU benchmarking is marked not run until you supply `--qnn-model` with a
+compatible ONNX artifact. Override the sample with `--input path\to\file`.
+
 ## 1. Technical Implementation
 
 ### Bundled classifier and one-command export
@@ -266,6 +272,21 @@ preparation steps, separate from offline analysis.
 python -m pip install -r requirements-dev.txt
 python -m pytest -q
 ```
+
+Both `pytest` and `python -m pytest` work from the repository root; `pytest.ini`
+adds that root to the import path and limits collection to `tests/`. Run them
+inside the environment where you installed `requirements-dev.txt`. If collection
+reports missing `PyQt6` or `onnx`, those dependencies are absent from the selected
+interpreter; the test configuration does not install packages. To use the project
+environment explicitly without relying on shell activation:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+.\.venv\Scripts\python.exe -m pytest -q
+```
+
+Transformer export integration additionally needs `requirements-models.txt`; that
+test is skipped when the optional transformer dependencies are not installed.
 
 Tests cover bundled INT8 CPU fallback, model hashes, offline export fallback,
 profile units, mock CLI behavior, failed jobs, fake-SDK live call sequencing,

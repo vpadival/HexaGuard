@@ -5,6 +5,7 @@
   "tokenizer": "byte-v1",
   "sequence_length": 256,
   "warning": "Untrained synthetic model; scores have no threat-detection meaning",
+  "fallback_reason": "ModuleNotFoundError",
   "labels": {
     "0": "Benign",
     "1": "Malicious"

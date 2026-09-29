@@ -8,7 +8,8 @@ import sys
 from pathlib import Path
 from time import perf_counter
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
 
 
 def measure(args):
@@ -38,9 +39,11 @@ def measure(args):
 def main():
     """Never substitute CPU measurements for an unavailable NPU."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--cpu-model", type=Path)
-    parser.add_argument("--qnn-model", type=Path)
-    parser.add_argument("--input", type=Path, required=True)
+    parser.add_argument("--cpu-model", type=Path,
+                        default=ROOT / "assets/models/threat_detector_int8.onnx")
+    parser.add_argument("--qnn-model", type=Path,
+                        help="Optional compatible QNN ONNX model; omit for CPU-only benchmarking")
+    parser.add_argument("--input", type=Path, default=ROOT / "tests/sample_benign.ps1")
     parser.add_argument("--runs", type=int, default=100)
     parser.add_argument("--qnn-backend", default="QnnHtp.dll")
     parser.add_argument("--worker", choices=["cpu", "qnn"], help=argparse.SUPPRESS)
@@ -55,14 +58,15 @@ def main():
             print(json.dumps({"error": str(exc)}))
             sys.exit(1)
         return
-    if not args.cpu_model or not args.qnn_model:
-        parser.error("Supply both --cpu-model and --qnn-model")
     from rich.console import Console
     from rich.table import Table
     table = Table(title=f"HexaGuard: {args.runs} runs after 5 warmups per backend")
     for title in ["Backend", "Mean ms", "P99 ms", "Files/s", "RSS delta MiB", "Thermal footprint"]:
         table.add_column(title)
     for backend, model in [("cpu", args.cpu_model), ("qnn", args.qnn_model)]:
+        if model is None:
+            table.add_row(backend, "Not run", "-", "-", "-", "Supply --qnn-model")
+            continue
         command = [sys.executable, str(Path(__file__).resolve()), "--worker", backend,
                    "--model", str(model), "--input", str(args.input), "--runs", str(args.runs),
                    "--qnn-backend", args.qnn_backend]
@@ -75,7 +79,10 @@ def main():
                           f"{result['throughput']:.1f}", f"{result['rss_delta_mib']:.2f}", result["thermal"])
         except (subprocess.TimeoutExpired, ValueError, IndexError, RuntimeError) as exc:
             table.add_row(backend, "Unavailable", "-", "-", "-", str(exc))
-    Console().print(table)
+    console = Console()
+    console.print(f"Input: {args.input}", markup=False)
+    console.print("Bundled models are synthetic demos; timings do not establish detection accuracy.")
+    console.print(table)
 
 
 if __name__ == "__main__":
