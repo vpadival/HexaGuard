@@ -9,7 +9,8 @@ import re
 
 MAX_BYTES = 8 * 1024 * 1024
 APIS = ("VirtualAlloc", "VirtualAllocEx", "WriteProcessMemory",
-        "CreateRemoteThread", "AmsiScanBuffer", "AmsiInitialize")
+        "CreateRemoteThread", "AmsiScanBuffer", "AmsiInitialize",
+        "NtUnmapViewOfSection", "SetThreadContext", "ResumeThread")
 
 
 def decode_text(data: bytes) -> str:
@@ -42,6 +43,7 @@ class DisassemblyAnalyzer:
             "string_concatenation": r"['\"]\s*\+\s*['\"]",
             "variable_mutation": r"(?i)\$[\w]+\s*\+=|set-variable\b",
             "amsi_reference": r"(?i)amsi(?:scanbuffer|initialize|utils|initfailed)",
+            "iex_invocation": r"(?i)\b(?:iex|invoke-expression)\b",
         }
         result["behaviors"] = [key for key, regex in patterns.items() if re.search(regex, text)]
         regions = []

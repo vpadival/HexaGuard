@@ -1,0 +1,10 @@
+{
+  "mode": "mock",
+  "simulated": true,
+  "device": "Snapdragon X Elite CRD",
+  "notice": "Illustrative demo values, not measured or predicted hardware performance",
+  "npu": {"median_latency_ms": 4.2, "peak_memory_bytes": 67108864, "htp_only_verified": false},
+  "cpu": {"median_latency_ms": 38.6, "peak_memory_bytes": 134217728},
+  "compiled_binary": null,
+  "jobs": []
+}

@@ -1,108 +1,18 @@
 # HexaGuard
 
-Offline Endpoint & Threat Disassembly Engine for Snapdragon HP PCs.
+Offline endpoint triage and threat disassembly for Snapdragon HP PCs.
 
-HexaGuard is a read-only desktop triage application for Windows 11 on ARM64,
-including Snapdragon X Elite / X Plus systems. It combines bounded static
-inspection, a supplied ONNX classifier, and local evidence-based guidance.
-Files are never executed and the runtime makes no cloud requests.
+HexaGuard inspects user-submitted scripts and binaries, runs local ONNX inference,
+and presents static evidence with MITRE ATT&CK hypotheses and remediation guidance.
+The desktop runtime does not execute submitted files or call cloud services.
 
-**Release status:** working reference implementation, not a validated production
-endpoint protection product. No trained threat classifier or quantized language
-model is bundled. Static analysis works immediately; probabilities require your
-own compatible trained model. No accuracy, sub-10 ms latency, NPU throughput,
-or thermal claim is made without measurement. It does not continuously monitor,
-block, quarantine, or remediate processes. “Autonomous” here means local automatic
-analysis of a user-submitted file, not an autonomous response agent.
+**A working INT8 demo model is now bundled.** It has deterministic synthetic
+weights and is **not trained to detect malware**. Its scores exercise the complete
+pipeline; they are explicitly labeled DEMO, and `is_malicious` is `None`. No
+detection accuracy or verified Snapdragon performance is claimed. A fine-tuned,
+independently validated classifier is still needed for operational decisions.
 
-## 1. Technical Implementation
-
-### QNN HTP backend and CPU fallback
-
-`HexaGuardDetector` requests `QNNExecutionProvider` with `QnnHtp.dll` and
-`htp_performance_mode=burst`. QNN sessions set
-`session.disable_cpu_ep_fallback=1`, so unsupported graph nodes fail initialization.
-Runtime fallback is also disabled. With `--backend auto`, initialization failure
-logs a warning and opens a separate CPU session. `--backend qnn` fails instead.
-The NPU badge appears only after a successful strict QNN prediction.
-
-“Zero CPU offloading” applies to inference graph placement only. File reading,
-tokenization, static analysis, GUI rendering, and guidance run on the CPU. Some
-exported models contain CPU-dependent I/O wrappers and will intentionally fail
-strict mode. Use a compatible graph and verify node placement with vendor
-profiling tools before making performance claims.
-
-A context-only ONNX model cannot run on CPU. Supply its portable ONNX equivalent
-with `--cpu-model`; preserve the adjacent context binary and its relative path.
-The bare `.bin` artifact is not an ONNX Runtime model.
-
-### Model and tokenizer contract
-
-The application intentionally refuses arbitrary models whose preprocessing is
-unknown. Supply a trusted model with:
-
-* One input, `int32` or `int64`, fixed shape `[1,N]`, `1 <= N <= 1048576`.
-* Byte tokenizer `byte-v1`: UTF-8 for pasted text; raw bytes for files; byte value
-  plus one is the token ID; zero is padding. Vocabulary size is at least 257.
-* ONNX metadata `hexaguard.tokenizer=byte-v1` on each deployment artifact.
-* One float32 output `[1,1]`, a finite malicious-class probability in `[0,1]`.
-* Training, calibration, and evaluation using exactly this preprocessing.
-
-For long inputs the detector runs nonoverlapping windows and takes the maximum
-score. This aggregate is a model score, not a calibrated file-level probability.
-The default decision threshold is 0.7. Maximum input is 8 MiB and maximum windows
-is 4096; larger jobs fail explicitly. Patterns spanning window boundaries can be
-missed by the model. Static rules examine the bounded complete input.
-
-Model exports may lose custom metadata. Restore it locally only after checking
-that the tokenizer, vocabulary, and tensor semantics still match. Changing the
-metadata alone does not make an incompatible model compatible.
-
-### Disassembly and local reasoning
-
-Capstone decodes x64 and ARM64. PE machine headers select the ISA, executable
-sections supply bytes, and imports supply API indicators. Raw code requires an
-explicit ISA. Inspection is capped at 512 instructions and 64 KiB per region;
-linear decoding cannot recover all control flow or dynamically resolved calls.
-Call instructions are highlighted separately from suspicious API names; there
-is no claim that a highlighted call invokes a particular API.
-
-PowerShell rules flag Base64 wrappers, concatenation, variable mutation, and AMSI
-references, including UTF-16 text. They do not decode or execute payloads.
-Comments and benign administration scripts can match these rules.
-`ThreatCopilot` is a deterministic offline evidence mapper, not a quantized LLM.
-It returns ATT&CK hypotheses, evidence, and non-destructive remediation guidance.
-T1055 is a technique, and T1562.001 is a sub-technique; their tactics are reported
-separately. The bundled mapping is a static snapshot, not a live ATT&CK feed.
-
-### Quantization and AI Hub
-
-`compile_ai_hub.py` provides an **online build-time** workflow. AI Hub uploads
-models and calibration inputs; it is separate from the air-gapped runtime.
-Never use sensitive endpoint samples as calibration data without authorization.
-
-`w8a8` uses the SDK quantization job with INT8 weights and activations. `w4a16`
-accepts an externally quantized compatible artifact via `--prequantized`;
-the script does not invent unsupported generic 4-bit quantization flags.
-Compatibility depends on graph operators, SDK/runtime versions and target device.
-The script does not verify a pre-quantized artifact's actual bit widths: review
-encodings and compiler output. `qai-hub-models` is an optional model-development
-tool, not a source of a trained HexaGuard threat classifier.
-
-## 2. Application Use Case & Innovation
-
-The intended use is private, local triage on a Snapdragon laptop: drop a script
-or binary, inspect readable evidence and hex bytes, then correlate findings with
-your incident-response workflow. No endpoint content needs to leave the PC.
-Local model scoring can reduce dependence on online services once an appropriate
-classifier has been trained and validated. Human review remains necessary.
-
-## 3. Deployment & Accessibility on HP Snapdragon PCs
-
-Use native ARM64 Python 3.10+ on Windows 11 with current OEM drivers. Confirm
-native wheels exist for your chosen Python version before deployment; package
-availability differs across Python and processor architectures. In particular,
-PyQt6 and QNN-enabled ONNX Runtime require compatible native builds.
+## Quick start
 
 From the repository root in PowerShell:
 
@@ -114,90 +24,269 @@ python -m pip install -r requirements.txt
 python -m src.app.main_gui
 ```
 
-This starts static mode without a model. Paste text, use Open file, or drag one
-local file onto the window. Use `auto` for PE/script inputs; select `x64` or
-`arm64` only for raw instruction bytes. The interface displays measured inference
-latency when a model is loaded, host CPU utilization, and process RAM.
+The GUI loads `assets/models/threat_detector_int8.onnx` by default. Paste text,
+open a file, or drop a local file. Select `auto` for scripts/PEs; choose `x64` or
+`arm64` explicitly for raw instruction bytes. `--static-only` disables inference.
+The display shows measured local inference latency and process RAM. DEMO scores
+are never presented as threat probabilities.
 
-The default `onnxruntime` dependency supports CPU development. For NPU deployment,
-replace it with a Qualcomm-compatible QNN-enabled ONNX Runtime distribution for
-your exact native Python/Windows architecture, following the official QNN guide.
-Do not install two distributions that both provide the `onnxruntime` module into
-the same environment. Deploy the matching QNN HTP backend, dependent libraries,
-and device drivers from trusted vendor packages. A DLL name alone is insufficient.
+## 1. Technical Implementation
+
+### Bundled classifier and one-command export
+
+The repository includes:
+
+| Artifact | Purpose |
+| --- | --- |
+| `assets/models/threat_detector.onnx` | Floating-point synthetic reference graph |
+| `assets/models/threat_detector_int8.onnx` | Dynamically quantized INT8 CPU demo |
+| `assets/models/model_card.json` | Provenance, demo status, tokenizer, labels and SHA-256 hashes |
+
+Rebuild without network access:
+
+```powershell
+python scripts/export_threat_model.py --synthetic
+```
+
+The fallback uses seeded random weights, MatMul layers and a class-1 sigmoid.
+It is input-dependent, with class convention 0=Benign and 1=Malicious; those names
+do not imply learned semantics. Both graphs are checked with ONNX checker and
+executed on CPU before publication. Export verifies actual INT8 weight tensors.
+Successful generation requires installed dependencies and writable disk space.
+
+To export a lightweight Hugging Face sequence classifier:
+
+```powershell
+python -m pip install -r requirements-models.txt
+python scripts/export_threat_model.py
+python scripts/export_threat_model.py --source distilbert-base-uncased --allow-download
+python scripts/export_threat_model.py --source C:\Models\MyFineTunedThreatClassifier
+```
+
+Without `--allow-download`, loading is local/cache-only. Missing dependencies,
+offline cache misses, authentication failures, or export errors fall back to the
+synthetic graph and record the exception type in the model card. Existing output
+models are replaced only after staging and validation succeed. `--output` selects
+a separate directory. A tokenizer directory is also saved for transformer exports.
+The bundled synthetic export does not require transformers or torch.
+
+`distilbert-base-uncased` has no trained threat-classification head. Adding a
+binary head does not train it. Base models and checkpoints without an explicit
+Benign/Malicious label map are marked demo. A checkpoint declaring
+`id2label={0: "Benign", 1: "Malicious"}` is marked external/unvalidated, never
+automatically certified. Other label orders require retraining/re-exporting with
+the correct class convention. Respect upstream weight licenses and access terms.
+
+### Tokenizers and model contracts
+
+Both supported exports return one float32 probability `[1,1]`. Input dimensions
+are fixed `[1,N]`. The ONNX metadata identifies preprocessing:
+
+* `byte-v1`: one integer input, raw byte plus one, zero padding, vocabulary 257.
+  Pasted text uses UTF-8; file content remains raw bytes.
+* `hf-local-v1`: `input_ids` and `attention_mask`, with the export's adjacent
+  `tokenizer/` folder. It loads locally with remote code disabled. Text is decoded
+  from UTF-8 or UTF-16 and tokenized with overflow windows; binary text decoding
+  is lossy, so this contract is primarily appropriate for script/text classifiers.
+
+The detector takes the maximum window score; this is not calibrated file-level
+probability. Inputs are limited to 8 MiB and 4096 model windows. A non-demo model's
+default threshold is 0.7, subject to independent calibration. Preserve model
+metadata and tokenizer assets in every deployment. QNN exports can alter tensor
+types and strip metadata: verify the contract before copying metadata from the
+source. Metadata alone does not make an incompatible graph compatible.
+
+### QNN HTP backend and zero CPU graph offloading
+
+The detector attempts `QNNExecutionProvider`, `backend_path=QnnHtp.dll` and burst
+mode. QNN sessions disable CPU graph fallback and runtime fallback. Unsupported
+graphs fail strict QNN mode; automatic mode warns and creates a separate CPU
+session. The NPU badge requires successful strict QNN inference. Parsing,
+tokenization, guidance and UI work still run on the CPU.
+
+The dynamically quantized INT8 artifact is intended for CPU execution. HTP
+compilation uses static calibration of the floating-point source. Context binaries
+are device-specific; a `.bin` cannot be loaded as a portable ONNX graph.
+
+```powershell
+python -m src.app.main_gui --backend cpu
+python -m src.app.main_gui --model assets\models\qnn_bundle\model.onnx --cpu-model assets\models\threat_detector_int8.onnx --backend auto --qnn-backend C:\Qualcomm\QNN\QnnHtp.dll
+```
+
+Replace the example paths with installed artifacts. Use `--backend qnn` to fail
+instead of falling back. Preserve the ONNX context wrapper's referenced binary.
+
+### Qualcomm AI Hub cloud compilation and profiling
+
+The SDK integration uses `qai_hub.Client` with an in-memory `ClientConfig` API
+token. Set `QAI_HUB_API_TOKEN` securely in your environment, or use `--api-token`
+(the environment avoids exposing a token through command history). The script
+does not persist or print tokens. Live mode requires `--allow-upload` because
+models and calibration data leave the machine. Runtime inference stays offline.
+
+Local demo, requiring no account or network:
+
+```powershell
+python scripts/compile_ai_hub.py --dry-run
+```
+
+Without a token, the script also defaults to mock mode. `--live` forces live mode
+and fails if credentials are unavailable. A live failure never switches to mock
+success. Mock mode writes `profile_mock.json`, sets `simulated: true`, creates no
+cloud job, and **does not create a QNN binary**.
+
+For real compilation, prepare a representative NPZ calibration set using the
+source model's tokenizer. Each input array has shape `[samples,1,N]` and exactly
+the source input dtype. Use the `tokens` key for byte-v1; use both `input_ids` and
+`attention_mask` for transformer exports. Every input must have the same sample
+count. Use authorized, non-sensitive calibration data.
+
+```powershell
+python scripts/compile_ai_hub.py --live --allow-upload --calibration C:\Models\calibration.npz
+```
+
+The live workflow:
+
+1. Confirms `Snapdragon X Elite CRD` is accessible to the account.
+2. Uploads the dynamic INT8 CPU artifact and the floating-point source.
+3. Requests static INT8 weights/activations using the SDK quantization job.
+4. Submits `--target_runtime qnn_dlc --compute_unit npu`, then links the DLC
+   into `assets/models/threat_detector_qnn.bin`.
+5. Downloads an ONNX context wrapper and profiles the context on NPU and the
+   dynamic INT8 baseline on CPU.
+6. Saves job IDs, source hash, raw profiles and `profile_hardware.json`.
+
+The requested legacy string `--target_runtime qnn_lib_aarch64_windows --precision
+int8` is not a supported option in the current official API. A QNN library is also
+not a context binary. This implementation uses the documented DLC compile/link
+flow instead. Quantization is applied explicitly rather than through an invented
+precision flag. Cloud operator/device/account availability can still cause failure.
+
+Median latency is computed from SDK `all_inference_times` in microseconds. If the
+SDK only supplies an estimate, it is stored separately, not relabeled a median.
+Peak memory and ranges are retained in bytes, with missing fields set to null.
+`htp_only_verified` is true only if reported execution units contain solely NPU;
+missing placement information is not considered verification. Check raw profiles
+before asserting zero CPU offloading. The CPU and HTP graphs use different
+quantization schemes; validate numerical parity before comparing performance.
+
+### Hardware performance metrics
+
+| Source | NPU median | CPU median | NPU peak memory | CPU peak memory |
+| --- | --- | --- | --- | --- |
+| **Simulated demo fixture** | 4.2 ms | 38.6 ms | 64 MiB | 128 MiB |
+| Verified Snapdragon run | Not yet measured | Not yet measured | Not yet measured | Not yet measured |
+
+The demo values are illustrative constants, not predictions, device measurements,
+or evidence of a speedup. Real results are written only after successful hardware
+jobs. No temperature/power claim is derived from latency.
+
+To measure locally on an equipped Snapdragon PC:
+
+```powershell
+python scripts/run_benchmark.py --cpu-model assets\models\threat_detector_int8.onnx --qnn-model assets\models\qnn_bundle\model.onnx --input tests\sample_benign.ps1
+```
+
+It performs five warmups and 100 scans in separate backend processes, reporting
+mean/P99 end-to-end latency, throughput and sampled host RSS delta. RSS excludes
+NPU allocations; startup is excluded from latency. NPU errors remain unavailable.
+Thermal footprint remains unmeasured without external instrumentation.
+
+### Tier-2 offline guidance
+
+`OfflineGuidance` in `src/engine/offline_guidance.py` connects the existing
+`ThreatCopilot` evidence mapper to optional local language models. No weights are
+downloaded implicitly. The rules always provide guidance, including AMSI-related
+references (T1562.001), injection (T1055), process-hollowing API combinations
+(T1055.012), and Base64/IEX syntax (T1027/T1059.001). These are hypotheses based on
+static text, not proof of behavior. Benign scripts and comments can match.
+
+For GGUF, install `llama-cpp-python` for your native architecture and select a
+local instruction-tuned GGUF, such as a compatible quantization of Llama-3.2-1B
+Instruct or Qwen2.5-Coder-1.5B Instruct:
+
+```powershell
+python -m pip install llama-cpp-python
+python -m src.app.main_gui --guidance-model C:\Models\assistant.gguf
+```
+
+For ONNX, install `onnxruntime-genai` and supply a compatible **GenAI model
+directory**, including `genai_config.json`, tokenizer files and quantized weights.
+An arbitrary standalone ONNX file is insufficient. Add `chat_template.txt` with
+the model's exact instruction/chat formatting and a literal `{prompt}` insertion
+point. This avoids silently applying one model family's special tokens to another.
+
+```powershell
+python -m pip install onnxruntime-genai
+python -m src.app.main_gui --guidance-model C:\Models\qwen-genai
+```
+
+Install only the runner you use; `requirements-guidance.txt` lists both optional
+adapters. Native wheel availability varies. Generation receives bounded technique
+IDs and status, not raw submitted content; it has no tool execution privileges.
+Generated advice is shown as unverified alongside the original rule evidence.
+Missing weights, configuration errors and generation exceptions retain the rule
+fallback. Local LLM weights are not bundled because of size and licensing.
+
+## 2. Application Use Case & Innovation
+
+The intended use is private, automatic triage of a user-selected file on a
+Snapdragon laptop. Capstone supports x64/ARM64; PE headers select architecture
+and imports provide API indicators. Raw disassembly requires an explicit ISA.
+Inspection is capped at 512 instructions and 64 KiB per executable region.
+Highlighted call instructions are not resolved suspicious API invocations.
+
+The system provides transparent evidence, an offline model interface and optional
+local guidance. It does not continuously monitor, block, quarantine or modify
+processes. “Autonomous” describes submitted-file analysis, not incident response.
+
+## 3. Deployment & Accessibility on HP Snapdragon PCs
+
+Use native ARM64 Python 3.10+ on Windows 11 and current OEM drivers. Verify native
+PyQt6, inference and optional LLM wheels for the chosen Python version. The default
+`onnxruntime` package is for CPU development; replace it with a vendor-supported
+QNN-enabled distribution for native Windows ARM64. Do not install competing
+distributions supplying the same `onnxruntime` module in one environment.
+Use matched QNN HTP libraries, dependencies and drivers from trusted packages.
 
 ```powershell
 python -c "import platform, onnxruntime as ort; print(platform.machine()); print(ort.get_available_providers())"
-python -m src.app.main_gui --model models\threat.onnx --backend cpu
-python -m src.app.main_gui --model models\qnn\threat.onnx --cpu-model models\threat.onnx --backend auto --qnn-backend C:\Qualcomm\QNN\lib\arm64x-windows-msvc\QnnHtp.dll
 ```
 
-The example SDK path must be replaced with the installed, trusted backend path.
-Use `--backend qnn` to enforce HTP-only inference. A clean CPU fallback requires
-a portable equivalent model. No model is downloaded automatically.
+For air-gapped deployment, prepare a vetted wheelhouse on a matching connected
+machine, transfer packages plus model/tokenizer files, and install with
+`pip install --no-index --find-links wheelhouse -r requirements.txt`. Freeze the
+tested versions and record all model hashes. No AI Hub credentials are needed on
+the runtime PC. Optional Hugging Face export and AI Hub builds are connected
+preparation steps, separate from offline analysis.
 
-For air-gapped deployment, prepare a wheelhouse on a connected machine matching
-the target architecture and Python version, transfer vetted packages and model
-artifacts, then install with `pip install --no-index --find-links wheelhouse -r
-requirements.txt`. Freeze the tested environment and record model hashes before
-release. AI Hub is not needed at runtime.
-
-### Optional model compilation
-
-Configure AI Hub credentials using its official SDK setup; do not store tokens
-in this repository. Confirm the device name is available to your account.
-Calibration NPZ contains one array per model input with shape `[samples,1,N]`
-and the model's integer dtype; use representative, non-sensitive samples.
-
-```powershell
-python scripts\compile_ai_hub.py models\threat.onnx --calibration models\calibration.npz --quantization w8a8 --allow-upload
-python scripts\compile_ai_hub.py models\threat.aimet --quantization w4a16 --prequantized --allow-upload
-```
-
-Outputs include a context binary, an ONNX deployment artifact (which may be a
-directory/archive), and build metadata. Preserve the downloaded bundle structure.
-Revalidate the tensor/tokenizer contract and compare accuracy with the portable
-model before use. Unsupported graphs or account/device access failures are errors.
-
-### Benchmarking
-
-```powershell
-python scripts\run_benchmark.py --cpu-model models\threat.onnx --qnn-model models\qnn\threat.onnx --input tests\sample_benign.ps1
-```
-
-Each backend runs in a fresh process, with five warmups and 100 measured scans.
-The table reports end-to-end mean/P99 latency, files per second, and sampled RSS
-delta from before model initialization. RSS excludes NPU allocations and is not
-a precise peak-memory measurement. Compilation/session startup is excluded from
-timing. Thermal footprint is **not measured**; no defensible temperature or power
-estimate can be derived from latency alone. Use physical power/thermal telemetry
-for those measurements. NPU errors are reported as unavailable, never CPU results.
-
-### Tests and release validation
+## Tests and release status
 
 ```powershell
 python -m pip install -r requirements-dev.txt
 python -m pytest -q
 ```
 
-Tests use an explicitly synthetic constant-output ONNX graph solely to verify
-the inference contract and fallback behavior. It is not shipped as a classifier.
-`sample_malicious.ps1` is an inert comment-based indicator fixture with a harmless
-Write-Output statement; it does not implement an AMSI bypass.
+Tests cover bundled INT8 CPU fallback, model hashes, offline export fallback,
+profile units, mock CLI behavior, failed jobs, fake-SDK live call sequencing,
+guidance fallbacks, disassembly, and GUI worker flow. Fake SDK tests validate
+integration logic; they are not cloud/device verification. The malicious-named
+PowerShell fixture is inert comment text and does not implement an AMSI bypass.
 
-Before production use: train and validate a classifier on representative held-out
-data, calibrate thresholds and file aggregation, evaluate adversarial evasion and
-false positives, test X Elite/X Plus hardware and operator placement, sign and
-hash deployment artifacts, pin a tested dependency set, and perform malformed
-input/fuzz testing. Native parsers currently run in a worker thread, not an OS
-sandbox; isolate analysis in a restricted process before processing hostile files
-in a production service. This repository does not replace endpoint protection.
+This is a working reference application, not a production-validated protection
+product. Operational deployment requires training/accuracy and false-positive
+evaluation, threshold calibration, quantization parity testing, actual X Elite/
+X Plus benchmarks, signed artifacts, pinned dependencies and parser fuzz testing.
+Native parsers run in a worker thread rather than an OS sandbox; isolate hostile
+input processing in a restricted process before production service use.
 
-## Official implementation references
+## Official references
 
-* [ONNX Runtime QNN Execution Provider](https://onnxruntime.ai/docs/execution-providers/QNN-ExecutionProvider.html)
-* [Qualcomm AI Hub compilation](https://workbench.aihub.qualcomm.com/docs/hub/compile_examples.html)
-* [Qualcomm AI Hub quantization](https://workbench.aihub.qualcomm.com/docs/hub/quantize_examples.html)
-* [MITRE T1055 Process Injection](https://attack.mitre.org/techniques/T1055/)
-* [MITRE T1562.001 Impair Defenses](https://attack.mitre.org/techniques/T1562/001/)
-* [MITRE T1027 Obfuscated Files or Information](https://attack.mitre.org/techniques/T1027/)
+* [AI Hub API and supported options](https://workbench.aihub.qualcomm.com/docs/hub/api.html)
+* [AI Hub compilation and context linking](https://workbench.aihub.qualcomm.com/docs/hub/compile_examples.html)
+* [AI Hub quantization](https://workbench.aihub.qualcomm.com/docs/hub/quantize_examples.html)
+* [ONNX Runtime QNN provider](https://onnxruntime.ai/docs/execution-providers/QNN-ExecutionProvider.html)
+* [ONNX Runtime quantization](https://onnxruntime.ai/docs/performance/model-optimizations/quantization.html)
+* [ONNX Runtime GenAI Python API](https://onnxruntime.ai/docs/genai/api/python.html)
+* [MITRE Process Injection](https://attack.mitre.org/techniques/T1055/)
+* [MITRE Impair Defenses](https://attack.mitre.org/techniques/T1562/001/)

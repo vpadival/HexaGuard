@@ -1,0 +1,18 @@
+{
+  "status": "synthetic-demo",
+  "source": "seeded random weights",
+  "seed": 20260929,
+  "tokenizer": "byte-v1",
+  "sequence_length": 256,
+  "warning": "Untrained synthetic model; scores have no threat-detection meaning",
+  "labels": {
+    "0": "Benign",
+    "1": "Malicious"
+  },
+  "quantization": "ONNX Runtime dynamic INT8 weights; CPU artifact",
+  "validated_for_threat_detection": false,
+  "sha256": {
+    "threat_detector.onnx": "956f87020aee85ca8e80a803c6557a5fce6cf8541abd5324e5edd9983de9a321",
+    "threat_detector_int8.onnx": "f8a4b5d5ee3e2c216e61dd1338b3549955f0fb13cf0f08f528aa64e5b3c64ae3"
+  }
+}

@@ -4,6 +4,9 @@
 __pycache__/
 .pytest_cache/
 *.pyc
-models/
+/models/
+/assets/models/tokenizer/
+/assets/models/threat_detector_qnn*
+/assets/models/profile*.json
 artifacts/
 *.log

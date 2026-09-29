@@ -13,9 +13,9 @@ from PyQt6.QtWidgets import (QApplication, QComboBox, QFileDialog, QLabel,
     QMainWindow, QPlainTextEdit, QProgressBar, QPushButton, QTabWidget,
     QTextBrowser, QVBoxLayout, QWidget)
 
-from src.engine.copilot import ThreatCopilot
+from src.engine.offline_guidance import OfflineGuidance
 from src.engine.decompiler import DisassemblyAnalyzer, MAX_BYTES
-from src.engine.qnn_detector import HexaGuardDetector
+from src.engine.qnn_detector import DEFAULT_MODEL, HexaGuardDetector
 
 
 class ScanWorker(QObject):
@@ -40,10 +40,11 @@ class ScanWorker(QObject):
                 raise ValueError("Select a nonempty file or script, no larger than 8 MiB")
             analysis = DisassemblyAnalyzer().analyze(data, self.architecture)
             prediction = None
+            detector_options = {k: v for k, v in self.options.items() if k != "guidance_model"}
             if self.options.get("model_path"):
-                prediction = HexaGuardDetector(**self.options).predict(data)
+                prediction = HexaGuardDetector(**detector_options).predict(data)
             self.success.emit({"analysis": analysis, "prediction": prediction,
-                "copilot": ThreatCopilot().explain(prediction, analysis),
+                "copilot": OfflineGuidance(self.options.get("guidance_model")).explain(prediction, analysis),
                 "sha256": hashlib.sha256(data).hexdigest(), "hex": data[:4096].hex(" ")})
         except Exception as exc:
             self.failure.emit(f"{type(exc).__name__}: {exc}")
@@ -166,6 +167,8 @@ class MainWindow(QMainWindow):
         if pred:
             self.score.setValue(round(pred["threat_score"] * 100))
             self.score.setFormat(f"Model threat score: {pred['threat_score']:.1%}")
+            if pred.get("is_demo"):
+                self.score.setFormat(f"DEMO score (not a threat probability): {pred['threat_score']:.1%}")
             badge = ("Accelerated by Qualcomm Hexagon NPU" if pred["backend"] == "QNNExecutionProvider"
                      else "CPU inference")
             self.status.setText(f"{badge} | measured {pred['latency_ms']:.2f} ms | {pred['windows']} windows")
@@ -191,6 +194,11 @@ class MainWindow(QMainWindow):
             cards.append(f"<h3>{esc(card['id'])}: {esc(card['name'])}</h3>"
                          f"<p>{esc(card['tactic'])}<br>{esc(card['evidence'])}</p>")
         cards += [f"<p>• {esc(step)}</p>" for step in guidance["remediation"]]
+        cards.append(f"<p>Guidance backend: {esc(guidance['reasoning_backend'])}</p>")
+        if guidance.get("llm_guidance"):
+            cards.append(f"<h3>Local model advice (unverified)</h3><p>{esc(guidance['llm_guidance'])}</p>")
+        if guidance.get("fallback_reason"):
+            cards.append(f"<p>{esc(guidance['fallback_reason'])}</p>")
         self.guide.setHtml("".join(cards))
         self.hex.setPlainText(result["hex"])
 
@@ -206,11 +214,15 @@ class MainWindow(QMainWindow):
 def main():
     """Parse model selection and launch the desktop application."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--model", dest="model_path")
+    parser.add_argument("--model", dest="model_path", default=str(DEFAULT_MODEL))
+    parser.add_argument("--static-only", action="store_true")
+    parser.add_argument("--guidance-model", help="Local GGUF file or ORT GenAI model directory")
     parser.add_argument("--cpu-model", dest="cpu_model_path")
     parser.add_argument("--backend", choices=["auto", "cpu", "qnn"], default="auto")
     parser.add_argument("--qnn-backend", dest="backend_path", default="QnnHtp.dll")
     options = vars(parser.parse_args())
+    if options.pop("static_only"):
+        options["model_path"] = None
     app = QApplication(sys.argv[:1])
     window = MainWindow(options)
     window.show()
