@@ -1,0 +1,9 @@
+.venv/
+.test-deps/
+.test-tmp/
+__pycache__/
+.pytest_cache/
+*.pyc
+models/
+artifacts/
+*.log
