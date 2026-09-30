@@ -3,10 +3,27 @@
 .test-tmp/
 __pycache__/
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
 *.pyc
+*.pyo
+*.pyd
+*.egg-info/
+/build/
+/dist/
+/htmlcov/
+.coverage
+coverage.xml
 /models/
 /assets/models/tokenizer/
 /assets/models/threat_detector_qnn*
 /assets/models/profile*.json
 artifacts/
+brag-output/
 *.log
+
+# Local editor and operating-system files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
